@@ -1,6 +1,8 @@
 
 local inspect = require('inspect')
 
+local CHAR_SIZE = 0.8
+
 function love.load()
   local FONT_SIZE = 24
   math.randomseed(1)
@@ -30,24 +32,39 @@ function love.load()
   }
   local t, f = true, false
   glo.tiles = {
-    { name="wall",  pass=f, color={ 0xFF,0xFF,0xFF,0xFF } },
-    { name="floor", pass=t, color={ 0x20,0x20,0x20,0xFF } },
-    { name="grass", pass=t, color={ 0x20,0xFF,0x20,0xFF } },
-    { name="water", pass=f, color={ 0x20,0x20,0xFF,0xFF } },
+    { name="wall",  pass=f, color={0xFF,0xFF,0xFF} },
+    { name="floor", pass=t, color={0x40,0x40,0x40} },
+    { name="grass", pass=t, color={0x20,0x80,0x20} },
+    { name="water", pass=f, color={0x20,0x20,0x80} },
   }
-  for id, tile in ipairs(glo.tiles) do
-    tile.id = id
-  end
+  set_list_ids(glo.tiles)
   glo.viewX = 0
   glo.viewY = 0
-  glo.player = { r=2, c=2 }
+  glo.chars = {
+    { r=2, c=2, color={0xFF,0x00,0x00}, name = "player" },
+    { r=4, c=4, color={0x00,0xFF,0x00}, name = "goblin" },
+    { r=8, c=8, color={0x00,0x00,0xFF}, name = "smurf" },
+  }
+  set_list_ids(glo.chars)
+  glo.char_pos = {}
+  for i, c in ipairs(glo.chars) do
+    local key = string.format("%d,%d", c.r, c.c)
+    glo.char_pos[key] = c
+  end
+  glo.player = glo.chars[1]
   glo.infoFont = love.graphics.setNewFont(FONT_SIZE)
+end
+
+function set_list_ids(list)
+  for id, item in ipairs(list) do
+    item.id = id
+  end
 end
 
 function draw_char(cellX, cellY, color)
   love.graphics.setColor(color)
-  local charW = math.floor(glo.cellW / 2)
-  local charH = math.floor(glo.cellH / 2)
+  local charW = math.floor(glo.cellW * CHAR_SIZE)
+  local charH = math.floor(glo.cellH * CHAR_SIZE)
   local charRelX = math.floor((glo.cellW - charW) / 2)
   local charRelY = math.floor((glo.cellH - charH) / 2)
   local charEffX = cellX + charRelX
@@ -62,6 +79,26 @@ function get_tile(cellRC)
   if tileID == nil then return nil end
   local tile = glo.tiles[tileID]
   return tile
+end
+
+function get_char(cellRC)
+  local key = string.format("%d,%d", cellRC.r, cellRC.c)
+  return glo.char_pos[key]
+  --for i, char in ipairs(glo.chars) do
+  --  if char.r == cellRC.r and char.c == cellRC.c then
+  --    return char
+  --  end
+  --end
+  --return nil
+end
+
+function move_char(char, toCellRC)
+  local oldKey = string.format("%d,%d", char.r, char.c)
+  local newKey = string.format("%d,%d", toCellRC.r, toCellRC.c)
+  glo.char_pos[oldKey] = nil
+  glo.char_pos[newKey] = char
+  char.r = toCellRC.r
+  char.c = toCellRC.c
 end
 
 function list_to_set(x)
@@ -83,8 +120,8 @@ function love.keypressed(k)
     elseif k == "up"    then dest.r = dest.r - 1
     elseif k == "down"  then dest.r = dest.r + 1
     end
-    if get_tile(dest).pass then
-      glo.player = dest
+    if get_tile(dest).pass and not get_char(dest) then
+      move_char(glo.player, dest)
       -- TODO: Recenter view if near edge.
     end
   end
@@ -130,8 +167,9 @@ function love.draw()
       love.graphics.rectangle("fill",
         effectiveX, effectiveY,
         glo.cellW, glo.cellH)
-      if ri == glo.player.r and ci == glo.player.c then
-        draw_char(effectiveX, effectiveY, {0xFF,0x00,0x00,0xFF})
+      local charHere = get_char({r=ri,c=ci})
+      if charHere then
+        draw_char(effectiveX, effectiveY, charHere.color)
       end
     end
   end
@@ -147,14 +185,17 @@ function love.draw()
     tile = nil
   }
   mouseCell.tile = get_tile(mouseCell)
-  local mouseInfo = string.format(
-    "MouseAbs (%d,%d) MousePos (%d,%d)",
-    mouseAbs.x, mouseAbs.y, love.mouse.getX(), love.mouse.getY())
-  local tileInfo = ""
-  if mouseCell.tile then tileInfo = string.format("Cell r%d c%d: %s", mouseCell.r, mouseCell.c, mouseCell.tile.name)
-  else tileInfo = string.format("Cell r%d c%d: <NONE>", mouseCell.r, mouseCell.c)
+  local info = {}
+  info.mouse = string.format(
+    "View: (%d,%d) MouseAbs (%d,%d) MousePos (%d,%d)",
+    glo.viewX, glo.viewY, mouseAbs.x, mouseAbs.y, love.mouse.getX(), love.mouse.getY())
+  if mouseCell.tile then info.tile = string.format("Cell r%d c%d: %s", mouseCell.r, mouseCell.c, mouseCell.tile.name)
+  else info.tile = string.format("Cell r%d c%d: ---", mouseCell.r, mouseCell.c)
   end
-  local viewInfo = string.format("View: (%d,%d)", glo.viewX, glo.viewY)
+  local charName = "---"
+  local charUnderMouse = get_char(mouseCell)
+  if charUnderMouse then charName = charUnderMouse.name end
+  info.char = string.format("Char: %s", charName)
 
   -- Display info
   local infoPaneTop = screenH - 200
@@ -168,8 +209,8 @@ function love.draw()
     love.graphics.print(text, lineInfo.x, lineInfo.y)
     lineInfo.y = lineInfo.y + lineInfo.lineSkip
   end
-  println(mouseInfo, lineInfo)
-  println(tileInfo, lineInfo)
-  println(viewInfo, lineInfo)
+  println(info.mouse, lineInfo)
+  println(info.tile, lineInfo)
+  println(info.char, lineInfo)
 end
 
