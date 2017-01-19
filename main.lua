@@ -96,19 +96,19 @@ function new_char(r, c, name)
     char.color = {0xFF,0x00,0x00}
     char.letter = "P"
     char.hp = 10
-    char.speed = 5
+    char.speed = 50
   elseif name == "goblin" then
     char.color = {0x00,0xFF,0x00}
     char.letter = "G"
     char.hp = 6
-    char.speed = 5
-    char.aggression = 7
+    char.speed = 50
+    char.aggression = 70
   elseif name == "smurf" then
     char.color = {0x00,0x00,0xFF}
     char.letter = "S"
     char.hp = 4
-    char.speed = 5
-    char.aggression = 3
+    char.speed = 50
+    char.aggression = 30
   end
   return char
 end
@@ -142,10 +142,6 @@ end
 function get_char(cellRC)
   local key = string.format("%d,%d", cellRC.r, cellRC.c)
   return glo.char_pos[key]
-end
-
-function check_stat(stat)
-  return math.random(10) <= stat
 end
 
 function move_char(char, toCellRC)
@@ -284,24 +280,70 @@ function love.update()
         if char.alive then
           if check_stat(char.speed) then
             glo.commandText = (glo.commandText or '(X)') .. string.format(" [%s]", char.name)
+            local moves = nil
             if check_stat(char.aggression) then
               -- Make an aggressive move.
-              glo.commandText = glo.commandText .. "A)"
+              glo.commandText = glo.commandText .. "A:"
               local madeAttack = false
               for _, cellRC in ipairs(adjacent_cells(char)) do
                 local cellChar = get_char(cellRC)
                 if cellChar and cellChar.name == "player" then
                   -- NPC attacks player
+                  glo.commandText = glo.commandText .. "attack"
                   attack(char, glo.player)
                   break
                 end
               end
               if not madeAttack then
-                -- NPC moves
+                -- NPC moves toward player.
+                -- Generate list of moves that go toward the player.
+                local diff = cell_diff(char, glo.player)
+                moves = {
+                  { r = char.r, c = char.c + sign(diff.c) },
+                  { r = char.r + sign(diff.r), c = char.c },
+                }
+                function swap() moves = { moves[2], moves[1] } end
+                if math.abs(diff.c) > math.abs(diff.r) then
+                  -- keep default priority
+                elseif math.abs(diff.c) < math.abs(diff.r) then
+                  -- swap priority
+                  swap()
+                else
+                  -- randomly swap priority
+                  if chance(1, 2) then
+                    swap()
+                  end
+                end
               end
             else
-              -- Make a cowardly move.
-              glo.commandText = glo.commandText .. "C)"
+              -- Make a cowardly move. NPC moves away from player.
+              glo.commandText = glo.commandText .. "C:"
+              -- Generate list of moves that go away from the player.
+              local diff = cell_diff(glo.player, char)
+              moves = {
+                { r = char.r, c = char.c + sign(diff.c) },
+                { r = char.r + sign(diff.r), c = char.c },
+              }
+              function swap() moves = { moves[2], moves[1] } end
+              if math.abs(diff.c) > math.abs(diff.r) then
+                -- keep default priority
+              elseif math.abs(diff.c) < math.abs(diff.r) then
+                -- swap priority
+                swap()
+              else
+                -- randomly swap priority
+                if math.random(2) <= 1 then
+                  swap()
+                end
+              end
+            end
+            if moves then
+              for _, m in ipairs(moves) do
+                if get_tile(m).pass and not get_char(m) then
+                  move_char(char, m)
+                  break
+                end
+              end
             end
           end
         end
@@ -383,6 +425,24 @@ function dump(x)
   print(inspect(x))
 end
 
+function chance(chancesToHappen, outOfTotalChances)
+  return math.random(outOfTotalChances) <= chancesToHappen
+end
+
+function check_stat(stat)
+  return chance(stat, 100)
+end
+
+-- Vector (r/c) to travel from cell1 to cell2.
+function cell_diff(cell1, cell2)
+  return { r = cell2.r - cell1.r, c = cell2.c - cell1.c }
+end
+
+-- Vector (x/y) to travel from pt1 to pt2.
+function point_diff(pt1, pt2)
+  return { x = pt2.x - pt1.x, y = pt2.y - pt1.y }
+end
+
 -- Right edge of a box (exclusive coordinate).
 function box_right_x(box)
   return box.x + box.w
@@ -408,5 +468,12 @@ end
 function adjacent_cells(cellRC)
   return { { r = cellRC.r-1, c = cellRC.c },   { r = cellRC.r+1, c = cellRC.c },
            { r = cellRC.r,   c = cellRC.c-1 }, { r = cellRC.r,   c = cellRC.c+1 } }
+end
+
+function sign(x)
+  if x < 0 then return -1
+  elseif x > 0 then return 1
+  else return 0
+  end
 end
 
