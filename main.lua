@@ -21,20 +21,7 @@ function love.load()
                      h = love.graphics.getHeight() }
   glo.cellW = 50
   glo.cellH = 50
-  glo.rooms = {
-    { 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,2,4,4,4,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,2,4,4,4,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,2,2,4,4,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,2,2,2,4,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,2,3,3,3,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,3,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,2,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,2,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,2,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,2,1 },
-    { 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 },
-  }
+  glo.rooms = load_map()
   local t, f = true, false
   glo.tiles = {
     { name="wall",  pass=f, color={0xFF,0xFF,0xFF} },
@@ -72,9 +59,9 @@ function love.load()
                       tileFontSize, charLetterBoxW, charLetterBoxH))
   -- Set up chars.
   glo.chars = {
-    new_char(2, 2, "player"),
-    new_char(4, 4, "goblin"),
-    new_char(8, 8, "smurf"),
+    new_char(2, 2, "Player"),
+    new_char(4, 4, "Goblin"),
+    new_char(8, 8, "Smurf"),
   }
   glo.char_pos = {}
   for i, c in ipairs(glo.chars) do
@@ -93,27 +80,30 @@ local NextCharID = 1
 function new_char(r, c, name)
   local char = { id = NextCharID, r = r, c = c, name = name, alive = true }
   NextCharID = NextCharID + 1
-  if name == "player" then
+  if name == "Player" then
     char.color = {0xFF,0x00,0x00}
-    char.letter = "P"
+    char.letter = "@"
     char.base = {
-      hp = 10,
+      hp = 100,
       speed = 50,
+      attack = 50,
     }
-  elseif name == "goblin" then
+  elseif name == "Goblin" then
     char.color = {0x00,0xFF,0x00}
     char.letter = "G"
     char.base = {
-      hp = 6,
+      hp = 60,
       speed = 50,
+      attack = 40,
       aggression = 70,
     }
-  elseif name == "smurf" then
+  elseif name == "Smurf" then
     char.color = {0x00,0x00,0xFF}
     char.letter = "S"
     char.base = {
-      hp = 4,
+      hp = 40,
       speed = 50,
+      attack = 30,
       aggression = 30,
     }
   end
@@ -129,17 +119,6 @@ function set_list_ids(list)
   for id, item in ipairs(list) do
     item.id = id
   end
-end
-
-function draw_char(cellX, cellY, color)
-  love.graphics.setColor(color)
-  local charW = math.floor(glo.cellW * CHAR_SIZE)
-  local charH = math.floor(glo.cellH * CHAR_SIZE)
-  local charRelX = math.floor((glo.cellW - charW) / 2)
-  local charRelY = math.floor((glo.cellH - charH) / 2)
-  local charEffX = cellX + charRelX
-  local charEffY = cellY + charRelY
-  love.graphics.rectangle("fill", charEffX, charEffY, charW, charH)
 end
 
 function get_tile(cellRC)
@@ -198,18 +177,22 @@ function kill_char(char)
 end
 
 function attack(attackChar, targetChar)
-  local damage = math.random(5)
-  glo.commandOutput = string.format("Char %s attacks %s for %d damage.", attackChar.name, targetChar.name, damage)
+  local damage = 0
+  if type(attackChar.cur.attack) == "table" then
+    for i = 1, attackChar.cur.attack[1] do
+      damage = damage + math.random(attackChar.cur.attack[2])
+    end
+  else
+    damage = math.random(attackChar.cur.attack)
+  end
+  glo.commandOutput = glo.commandOutput .. string.format("[%s->%s: %d] ", attackChar.name, targetChar.name, damage)
   targetChar.cur.hp = targetChar.cur.hp - damage
   if targetChar.cur.hp < 0 then
     targetChar.cur.hp = 0
   end
   if targetChar.cur.hp == 0 then
-    glo.commandOutput = glo.commandOutput .. string.format(" Char %s dies.", targetChar.name)
+    glo.commandOutput = glo.commandOutput .. string.format("(%s dies!) ", targetChar.name)
     kill_char(targetChar)
-  else
-    glo.commandOutput = glo.commandOutput .. string.format(" Char %s has %d/%d HP left.",
-                                                           targetChar.name, targetChar.cur.hp, targetChar.base.hp)
   end
   return damage
 end
@@ -243,7 +226,6 @@ end
 
 function love.mousepressed(x, y, button, istouch)
   if button == 1 then
-    --advance()
   elseif button == 2 then
     -- Center at mouse click
     local screenW = love.graphics.getWidth()
@@ -266,6 +248,10 @@ function love.update()
 
   -- Process pending commands.
   for i, cmd in ipairs(glo.commands) do
+    if not playerMadeMove then
+      playerMadeMove = true
+      glo.commandOutput = ""
+    end
     if cmd.cmd == "move" then
       local destChar = get_char(cmd.dest)
       if destChar then
@@ -279,7 +265,6 @@ function love.update()
         glo.commandText = string.format("CMD: Move to r%d c%d", cmd.dest.r, cmd.dest.c)
       end
     end
-    playerMadeMove = true
   end
 
   -- Clear commands queue.
@@ -300,7 +285,7 @@ function love.update()
               local madeAttack = false
               for _, cellRC in ipairs(adjacent_cells(char)) do
                 local cellChar = get_char(cellRC)
-                if cellChar and cellChar.name == "player" then
+                if cellChar and cellChar.id == 1 then
                   -- NPC attacks player
                   glo.commandText = glo.commandText .. "attack"
                   local dam = attack(char, glo.player)
@@ -377,18 +362,26 @@ function love.update()
     tile = nil
   }
   mouseCell.tile = get_tile(mouseCell)
-  displayText[1] = string.format(
+  local charInfo = ""
+  for _, char in ipairs(glo.chars) do
+    if char.cur.hp == 0 then
+      charInfo = charInfo .. string.format("[%s -/%d] ", char.name, char.base.hp)
+    else
+      charInfo = charInfo .. string.format("[%s %d/%d] ", char.name, char.cur.hp, char.base.hp)
+    end
+  end
+  local viewInfo = string.format(
     "View: (%d,%d) MouseAbs (%d,%d) MousePos (%d,%d)",
     glo.view.x, glo.view.y, mouseAbs.x, mouseAbs.y, love.mouse.getX(), love.mouse.getY())
-  if mouseCell.tile then displayText[2] = string.format("Cell r%d c%d: %s", mouseCell.r, mouseCell.c, mouseCell.tile.name)
-  else displayText[2] = string.format("Cell r%d c%d: ---", mouseCell.r, mouseCell.c)
+  if mouseCell.tile then viewInfo = viewInfo .. string.format(" Cell r%d c%d: %s", mouseCell.r, mouseCell.c, mouseCell.tile.name)
+  else viewInfo = viewInfo .. string.format(" Cell r%d c%d: ---", mouseCell.r, mouseCell.c)
   end
-  local charName = "---"
   local charUnderMouse = get_char(mouseCell)
-  if charUnderMouse then charName = charUnderMouse.name end
-  displayText[3] = string.format("Char: %s", charName)
-  displayText[4] = glo.commandText
-  displayText[5] = glo.commandOutput
+  if charUnderMouse then viewInfo = displayText[1] .. "(" .. charUnderMouse.name .. ")" end
+  displayText[1] = charInfo
+  displayText[2] = glo.commandText or ''
+  displayText[3] = glo.commandOutput or ''
+  displayText[4] = viewInfo
 end
 
 function love.draw()
@@ -399,6 +392,8 @@ function love.draw()
   love.graphics.setColor(255, 255, 255, 255)
   love.graphics.setBlendMode("alpha")
   --love.graphics.setBlendMode("alpha", "premultiplied")
+
+  -- TODO: VISIBILITY
 
   -- Draw the map
   for ri, rv in ipairs(glo.rooms) do
@@ -413,7 +408,7 @@ function love.draw()
         glo.cellW, glo.cellH)
       local charHere = get_char({r=ri,c=ci})
       if charHere then
-        draw_char(effectiveX, effectiveY, charHere.color)
+        draw_char(effectiveX, effectiveY, charHere)
       end
     end
   end
@@ -431,6 +426,24 @@ function love.draw()
     love.graphics.print(text, infoTextX, infoTextY)
     infoTextY = infoTextY + lineSkip
   end
+end
+
+function draw_char(cellX, cellY, char)
+  -- Rectangle
+  love.graphics.setColor(char.color)
+  local charW = math.floor(glo.cellW * CHAR_SIZE)
+  local charH = math.floor(glo.cellH * CHAR_SIZE)
+  local charRelX = math.floor((glo.cellW - charW) / 2)
+  local charRelY = math.floor((glo.cellH - charH) / 2)
+  local charEffX = cellX + charRelX
+  local charEffY = cellY + charRelY
+  love.graphics.rectangle("fill", charEffX, charEffY, charW, charH)
+  -- Letter
+  love.graphics.setFont(glo.tileFont)
+  love.graphics.setColor({0xFF,0xFF,0xFF})
+  local letterOffsetX = math.floor((glo.cellW - glo.tileFont:getWidth(char.letter)) / 2)
+  local letterOffsetY = math.floor((glo.cellH - glo.tileFont:getHeight()) / 2)
+  love.graphics.print(char.letter, cellX + letterOffsetX, cellY + letterOffsetY)
 end
 
 --------------------
@@ -490,5 +503,33 @@ function sign(x)
   elseif x > 0 then return 1
   else return 0
   end
+end
+
+function load_map()
+  return {
+    { 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 },
+    { 1,2,2,2,2,2,2,2,2,2,2,2,4,4,4,1 },
+    { 1,2,2,2,2,2,2,2,2,2,2,2,4,4,4,1 },
+    { 1,2,2,2,2,2,2,2,2,2,2,2,2,4,4,1 },
+    { 1,2,2,2,2,2,2,2,2,2,2,2,2,2,4,1 },
+    { 1,2,2,2,2,2,2,2,2,2,2,2,3,3,3,1 },
+    { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,3,1 },
+    { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,2,1 },
+    { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,2,1 },
+    { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,2,1 },
+    { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,2,1 },
+    { 1,1,1,1,1,1,1,2,1,1,1,1,1,1,1,1 },
+    { 1,1,1,1,1,1,1,2,1,1,1,1,1,1,1,1 },
+    { 1,1,1,1,1,1,1,3,1,1,1,1,1,1,1,1 },
+    { 1,1,1,1,1,1,1,3,1,1,1,1,1,1,1,1 },
+    { 1,1,1,1,1,1,1,3,1,1,1,1,1,1,1,1 },
+    { 1,1,1,1,1,1,1,3,1,1,1,1,1,1,1,1 },
+    { 1,1,1,1,1,1,1,2,1,1,1,1,1,1,1,1 },
+    { 1,1,1,1,1,1,2,2,2,2,2,2,1,1,1,1 },
+    { 1,1,1,1,1,2,2,2,2,2,2,2,1,1,1,1 },
+    { 1,1,1,1,1,2,2,2,2,2,2,2,1,1,1,1 },
+    { 1,1,1,1,1,1,2,2,2,2,2,1,1,1,1,1 },
+    { 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 },
+  }
 end
 
