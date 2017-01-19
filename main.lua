@@ -81,6 +81,7 @@ function love.load()
     local key = string.format("%d,%d", c.r, c.c)
     glo.char_pos[key] = c
   end
+  dump(glo.chars)
   glo.player = glo.chars[1]
   -- Ensure that we don't start up with the view over in one corner.
   recenter_view()
@@ -95,20 +96,31 @@ function new_char(r, c, name)
   if name == "player" then
     char.color = {0xFF,0x00,0x00}
     char.letter = "P"
-    char.hp = 10
-    char.speed = 50
+    char.base = {
+      hp = 10,
+      speed = 50,
+    }
   elseif name == "goblin" then
     char.color = {0x00,0xFF,0x00}
     char.letter = "G"
-    char.hp = 6
-    char.speed = 50
-    char.aggression = 70
+    char.base = {
+      hp = 6,
+      speed = 50,
+      aggression = 70,
+    }
   elseif name == "smurf" then
     char.color = {0x00,0x00,0xFF}
     char.letter = "S"
-    char.hp = 4
-    char.speed = 50
-    char.aggression = 30
+    char.base = {
+      hp = 4,
+      speed = 50,
+      aggression = 30,
+    }
+  end
+  -- Copy base stats to current stats.
+  char.cur = {}
+  for stat, statValue in pairs(char.base) do
+    char.cur[stat] = statValue
   end
   return char
 end
@@ -188,17 +200,18 @@ end
 function attack(attackChar, targetChar)
   local damage = math.random(5)
   glo.commandOutput = string.format("Char %s attacks %s for %d damage.", attackChar.name, targetChar.name, damage)
-  targetChar.hp = targetChar.hp - damage
-  if targetChar.hp < 0 then
-    targetChar.hp = 0
+  targetChar.cur.hp = targetChar.cur.hp - damage
+  if targetChar.cur.hp < 0 then
+    targetChar.cur.hp = 0
   end
-  if targetChar.hp == 0 then
+  if targetChar.cur.hp == 0 then
     glo.commandOutput = glo.commandOutput .. string.format(" Char %s dies.", targetChar.name)
     kill_char(targetChar)
   else
-    glo.commandOutput = glo.commandOutput .. string.format(" Char %s has %d HP left.", targetChar.name, targetChar.hp)
+    glo.commandOutput = glo.commandOutput .. string.format(" Char %s has %d/%d HP left.",
+                                                           targetChar.name, targetChar.cur.hp, targetChar.base.hp)
   end
-
+  return damage
 end
 
 function recenter_view()
@@ -278,10 +291,10 @@ function love.update()
       for i = 2, table.getn(glo.chars) do
         local char = glo.chars[i]
         if char.alive then
-          if check_stat(char.speed) then
+          if check_stat(char.cur.speed) then
             glo.commandText = (glo.commandText or '(X)') .. string.format(" [%s]", char.name)
             local moves = nil
-            if check_stat(char.aggression) then
+            if check_stat(char.cur.aggression) then
               -- Make an aggressive move.
               glo.commandText = glo.commandText .. "A:"
               local madeAttack = false
@@ -290,7 +303,8 @@ function love.update()
                 if cellChar and cellChar.name == "player" then
                   -- NPC attacks player
                   glo.commandText = glo.commandText .. "attack"
-                  attack(char, glo.player)
+                  local dam = attack(char, glo.player)
+                  glo.commandText = glo.commandText .. dam .. "hp"
                   break
                 end
               end
@@ -337,6 +351,7 @@ function love.update()
                 end
               end
             end
+            -- Make the first available move.
             if moves then
               for _, m in ipairs(moves) do
                 if get_tile(m).pass and not get_char(m) then
@@ -348,7 +363,7 @@ function love.update()
           end
         end
       end
-    until check_stat(glo.player.speed)
+    until check_stat(glo.player.cur.speed)
   end
 
   -- Compose displayText
