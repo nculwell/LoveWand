@@ -56,21 +56,61 @@ function love.load()
     w = screenSz.w,
     h = INFO_PANE_H
   }
+  -- Set up fonts.
+  glo.infoFont = love.graphics.setNewFont(FONT_SIZE)
+  local charLetterSz = 0.8 * CHAR_SIZE
+  local charLetterBoxW = math.floor(charLetterSz * glo.cellW)
+  local charLetterBoxH = math.floor(charLetterSz * glo.cellH)
+  local tileFontMaxHeight = math.floor(0.8 * CHAR_SIZE * glo.cellH)
+  local tileFontSize = 51
+  repeat
+    tileFontSize = tileFontSize - 1
+    glo.tileFont = love.graphics.setNewFont(tileFontSize)
+  until glo.tileFont:getHeight() <= charLetterBoxH
+    and glo.tileFont:getWidth("M") <= charLetterBoxW
+  print(string.format("Tile font size: %q. Letter box: %dx%d",
+                      tileFontSize, charLetterBoxW, charLetterBoxH))
+  -- Set up chars.
   glo.chars = {
-    { r=2, c=2, color={0xFF,0x00,0x00}, name = "player" },
-    { r=4, c=4, color={0x00,0xFF,0x00}, name = "goblin" },
-    { r=8, c=8, color={0x00,0x00,0xFF}, name = "smurf" },
+    new_char(2, 2, "player"),
+    new_char(4, 4, "goblin"),
+    new_char(8, 8, "smurf"),
   }
-  set_list_ids(glo.chars)
   glo.char_pos = {}
   for i, c in ipairs(glo.chars) do
     local key = string.format("%d,%d", c.r, c.c)
     glo.char_pos[key] = c
   end
   glo.player = glo.chars[1]
-  glo.infoFont = love.graphics.setNewFont(FONT_SIZE)
   -- Ensure that we don't start up with the view over in one corner.
   recenter_view()
+  glo.commands = {}
+end
+
+local NextCharID = 1
+
+function new_char(r, c, name)
+  local char = { id = NextCharID, r = r, c = c, name = name, alive = true }
+  NextCharID = NextCharID + 1
+  if name == "player" then
+    char.color = {0xFF,0x00,0x00}
+    char.letter = "P"
+    char.hp = 10
+    char.speed = 5
+  elseif name == "goblin" then
+    char.color = {0x00,0xFF,0x00}
+    char.letter = "G"
+    char.hp = 6
+    char.speed = 5
+    char.aggression = 7
+  elseif name == "smurf" then
+    char.color = {0x00,0x00,0xFF}
+    char.letter = "S"
+    char.hp = 4
+    char.speed = 5
+    char.aggression = 3
+  end
+  return char
 end
 
 function set_list_ids(list)
@@ -102,21 +142,21 @@ end
 function get_char(cellRC)
   local key = string.format("%d,%d", cellRC.r, cellRC.c)
   return glo.char_pos[key]
-  --for i, char in ipairs(glo.chars) do
-  --  if char.r == cellRC.r and char.c == cellRC.c then
-  --    return char
-  --  end
-  --end
-  --return nil
+end
+
+function check_stat(stat)
+  return math.random(10) <= stat
 end
 
 function move_char(char, toCellRC)
   local oldKey = string.format("%d,%d", char.r, char.c)
-  local newKey = string.format("%d,%d", toCellRC.r, toCellRC.c)
   glo.char_pos[oldKey] = nil
-  glo.char_pos[newKey] = char
-  char.r = toCellRC.r
-  char.c = toCellRC.c
+  if toCellRC ~= nil then
+    local newKey = string.format("%d,%d", toCellRC.r, toCellRC.c)
+    glo.char_pos[newKey] = char
+    char.r = toCellRC.r
+    char.c = toCellRC.c
+  end
 end
 
 function list_to_set(x)
@@ -139,11 +179,30 @@ function love.keypressed(k)
     elseif k == "up"    then dest.r = dest.r - 1
     elseif k == "down"  then dest.r = dest.r + 1
     end
-    if get_tile(dest).pass and not get_char(dest) then
-      move_char(glo.player, dest)
-      recenter_view()
-    end
+    table.insert(glo.commands, { cmd="move", dest=dest })
   end
+end
+
+function kill_char(char)
+  -- TODO: drop loot
+  move_char(char, nil) -- Remove char from the map.
+  char.alive = false
+end
+
+function attack(attackChar, targetChar)
+  local damage = math.random(5)
+  glo.commandOutput = string.format("Char %s attacks %s for %d damage.", attackChar.name, targetChar.name, damage)
+  targetChar.hp = targetChar.hp - damage
+  if targetChar.hp < 0 then
+    targetChar.hp = 0
+  end
+  if targetChar.hp == 0 then
+    glo.commandOutput = glo.commandOutput .. string.format(" Char %s dies.", targetChar.name)
+    kill_char(targetChar)
+  else
+    glo.commandOutput = glo.commandOutput .. string.format(" Char %s has %d HP left.", targetChar.name, targetChar.hp)
+  end
+
 end
 
 function recenter_view()
@@ -155,9 +214,6 @@ function recenter_view()
     w = (1 + 2 * glo.visibleMarginCells) * glo.cellW,
     h = (1 + 2 * glo.visibleMarginCells) * glo.cellH,
   }
-  print('(RECENTER)')
-  dump(playerVisibleBox)
-  dump(glo.view)
   -- First check right and bottom edges.
   -- (By putting these first, if the view box is larger than the screen
   -- then we'll align to the left and top edges since they are done last.)
@@ -174,7 +230,6 @@ function recenter_view()
   if playerVisibleBox.y < glo.view.y then
     glo.view.y = playerVisibleBox.y
   end
-  dump(glo.view)
 end
 
 function love.mousepressed(x, y, button, istouch)
@@ -197,6 +252,63 @@ end
 local displayText = {}
 
 function love.update()
+
+  local playerMadeMove = false
+
+  -- Process pending commands.
+  for i, cmd in ipairs(glo.commands) do
+    if cmd.cmd == "move" then
+      local destChar = get_char(cmd.dest)
+      if destChar then
+        -- attack destChar
+        glo.commandText = string.format("CMD: Attack char %s", destChar.name)
+        attack(glo.player, destChar)
+      elseif get_tile(cmd.dest).pass then
+        -- move to dest
+        move_char(glo.player, cmd.dest)
+        recenter_view()
+        glo.commandText = string.format("CMD: Move to r%d c%d", cmd.dest.r, cmd.dest.c)
+      end
+    end
+    playerMadeMove = true
+  end
+
+  -- Clear commands queue.
+  glo.commands = {}
+
+  -- Process NPC commands.
+  if playerMadeMove then
+    repeat
+      for i = 2, table.getn(glo.chars) do
+        local char = glo.chars[i]
+        if char.alive then
+          if check_stat(char.speed) then
+            glo.commandText = (glo.commandText or '(X)') .. string.format(" [%s]", char.name)
+            if check_stat(char.aggression) then
+              -- Make an aggressive move.
+              glo.commandText = glo.commandText .. "A)"
+              local madeAttack = false
+              for _, cellRC in ipairs(adjacent_cells(char)) do
+                local cellChar = get_char(cellRC)
+                if cellChar and cellChar.name == "player" then
+                  -- NPC attacks player
+                  attack(char, glo.player)
+                  break
+                end
+              end
+              if not madeAttack then
+                -- NPC moves
+              end
+            else
+              -- Make a cowardly move.
+              glo.commandText = glo.commandText .. "C)"
+            end
+          end
+        end
+      end
+    until check_stat(glo.player.speed)
+  end
+
   -- Compose displayText
   local mouseAbs = {
     x = love.mouse.getX() + glo.view.x,
@@ -218,6 +330,8 @@ function love.update()
   local charUnderMouse = get_char(mouseCell)
   if charUnderMouse then charName = charUnderMouse.name end
   displayText[3] = string.format("Char: %s", charName)
+  displayText[4] = glo.commandText
+  displayText[5] = glo.commandOutput
 end
 
 function love.draw()
@@ -289,5 +403,10 @@ end
 function box_abs_to_rel(box)
   return { x = box.x - view.x, y = box.y - view.y,
            w = box.w, h = box.h }
+end
+
+function adjacent_cells(cellRC)
+  return { { r = cellRC.r-1, c = cellRC.c },   { r = cellRC.r+1, c = cellRC.c },
+           { r = cellRC.r,   c = cellRC.c-1 }, { r = cellRC.r,   c = cellRC.c+1 } }
 end
 
