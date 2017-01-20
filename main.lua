@@ -405,89 +405,79 @@ function love.draw()
   local charsVisible = {}
   -- Allocate matrix to show which cells are visible.
   local cellVisibilityMatrix = {}
-  for i = 1, 2 * glo.viewDistance + 1 do
+  for r = 1, 2 * glo.viewDistance + 1 do
     local row = {}
-    for j = 1, 2 * glo.viewDistance + 1 do
-      table.insert(row, false)
+    for c = 1, 2 * glo.viewDistance + 1 do
+      row[c] = 0
     end
     table.insert(cellVisibilityMatrix, row)
   end
   -- Mark the spot where the player is standing as visible.
   local center = glo.viewDistance + 1
-  cellVisibilityMatrix[center][center] = true
+  cellVisibilityMatrix[center][center] = 2
 
-  local cellVisibilityMatrixOffset = { r = glo.player.x - glo.viewDistance,
-                                       c = glo.player.y - glo.viewDistance }
+  local cellVisibilityMatrixOffset = { glo.player.r - glo.viewDistance,
+                                       glo.player.c - glo.viewDistance }
 
   function set_cell_visible(matrixCoords, depMatrixCoords)
-    for i,d in ipars(depMatrixCoords) do
-      if not cellVisibilityMatrix[d.r][d.c] then
-        return
+    local visible = false
+    for _,d in ipairs(depMatrixCoords) do
+      if cellVisibilityMatrix[d[1]][d[2]] == 2 then
+        visible = true
+        break
       end
     end
-    local cellR = cellVisibilityMatrixOffset.r + matrixCoords.r
-    local cellC = cellVisibilityMatrixOffset.c + matrixCoords.c
-    local c = glo.rooms[cellR][cellC]
-    if c.vis then
-      cellVisibilityMatrix[matrixCoords.r][matrixCoords.c] = true
+    if not visible then return end
+    local cellR = cellVisibilityMatrixOffset[1] + matrixCoords[1]
+    local cellC = cellVisibilityMatrixOffset[2] + matrixCoords[2]
+    local c = get_tile({r=cellR, c=cellC})
+    if c then
+      if c.vis then
+        cellVisibilityMatrix[matrixCoords[1]][matrixCoords[2]] = 2
+      else
+        cellVisibilityMatrix[matrixCoords[1]][matrixCoords[2]] = 1
+      end
     end
   end
 
-  function cell_visible(cellRC)
-    local matrixCoordR = cellVisibilityMatrixOffset.r + cellRC.r
-    local matrixCoordC = cellVisibilityMatrixOffset.c + cellRC.c
-    return cellVisibilityMatrix[matrixCoordR][matrixCoordC]
+  function is_cell_visible(cellRC)
+    local matrixCoordR = cellRC.r - cellVisibilityMatrixOffset[1]
+    local matrixCoordC = cellRC.c - cellVisibilityMatrixOffset[2]
+    return 0 < ( cellVisibilityMatrix[matrixCoordR]
+                 and cellVisibilityMatrix[matrixCoordR][matrixCoordC]
+                 or 0 )
   end
 
   for distance = 1, glo.viewDistance do
-    -- -- Handle the cardinal directions first.
-    -- if cellVisibilityMatrix[center - prevDist][center] then
-    --   cellVisibilityMatrix[center - distance][center] = true
-    -- end
-    -- if cellVisibilityMatrix[center][center + prevDist] then
-    --   cellVisibilityMatrix[center][center + distance] = true
-    -- end
-    -- if cellVisibilityMatrix[center + prevDist][center] then
-    --   cellVisibilityMatrix[center + distance][center] = true
-    -- end
-    -- if cellVisibilityMatrix[center][center - prevDist] then
-    --   cellVisibilityMatrix[center][center - distance] = true
-    -- end
     -- Deal with everything except the corners first.
     for step = center - distance + 1, center + distance - 1 do
-      if cellVisibilityMatrix[step][center + distance - 1] then
-        cellVisibilityMatrix[step][center + distance] = true
-      end
-      if cellVisibilityMatrix[step][center - distance + 1] then
-        cellVisibilityMatrix[step][center - distance] = true
-      end
-      if cellVisibilityMatrix[center + distance - 1][step] then
-        cellVisibilityMatrix[center + distance][step] = true
-      end
-      if cellVisibilityMatrix[center - distance + 1][step] then
-        cellVisibilityMatrix[center - distance][step] = true
-      end
+      set_cell_visible({step, center + distance}, { {step, center + distance - 1} })
+      set_cell_visible({step, center - distance}, { {step, center - distance + 1} })
+      set_cell_visible({center + distance, step}, { {center + distance - 1, step} })
+      set_cell_visible({center - distance, step}, { {center - distance + 1, step} })
     end
     -- Now the corners.
-    if ( cellVisibilityMatrix[center - distance + 1][center - distance]
-         and cellVisibilityMatrix[center - distance][center - distance + 1] )
-    then
-      cellVisibilityMatrix[center - distance][center - distance] = true
-    end
-    if ( cellVisibilityMatrix[center - distance + 1][center + distance]
-         and cellVisibilityMatrix[center - distance][center + distance - 1] )
-    then
-      cellVisibilityMatrix[center - distance][center + distance] = true
-    end
-    if ( cellVisibilityMatrix[center + distance - 1][center + distance]
-         and cellVisibilityMatrix[center + distance][center + distance - 1] )
-    then
-      cellVisibilityMatrix[center + distance][center + distance] = true
-    end
-    if ( cellVisibilityMatrix[center + distance - 1][center - distance]
-         and cellVisibilityMatrix[center + distance][center - distance + 1] )
-    then
-      cellVisibilityMatrix[center + distance][center - distance] = true
+    set_cell_visible({center - distance, center - distance}, { {center - distance + 1, center - distance},
+                                                               {center - distance + 1, center - distance + 1},
+                                                               {center - distance, center - distance + 1} })
+    set_cell_visible({center - distance, center + distance}, { {center - distance + 1, center + distance},
+                                                               {center - distance + 1, center + distance - 1},
+                                                               {center - distance, center + distance - 1} })
+    set_cell_visible({center + distance, center + distance}, { {center + distance - 1, center + distance},
+                                                               {center + distance - 1, center + distance - 1},
+                                                               {center + distance, center + distance - 1} })
+    set_cell_visible({center + distance, center - distance}, { {center + distance - 1, center - distance},
+                                                               {center + distance - 1, center - distance + 1},
+                                                               {center + distance, center - distance + 1} })
+  end
+
+  if not glo.dumpedVisMtx then -- DUMP ONCE
+    glo.dumpedVisMtx = true
+    for r = 1, table.getn(cellVisibilityMatrix) do
+      for c = 1, table.getn(cellVisibilityMatrix) do
+        io.write(string.format("%d", cellVisibilityMatrix[r][c]))
+      end
+      print('')
     end
   end
 
@@ -500,8 +490,7 @@ function love.draw()
       local effectiveX, effectiveY = x - glo.view.x, y - glo.view.y
       tile = glo.tiles[cv]
       love.graphics.setColor(tile.color)
-      if cellVisibilityMatrix[ glo.player.x - glo.viewDistance +  ]
-      then
+      if is_cell_visible({r=ri, c=ci}) then
         love.graphics.rectangle("fill",
           effectiveX, effectiveY,
           glo.cellW, glo.cellH)
