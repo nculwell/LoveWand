@@ -8,6 +8,7 @@ function love.load()
   local FONT_SIZE = 24
   local INFO_PANE_H = 200
   local VISIBLE_MARGIN_CELLS = 3
+  local VIEW_DISTANCE = 20
   math.randomseed(1)
   -- Init global state
   glo.quitting = 0
@@ -17,6 +18,7 @@ function love.load()
   --modeFlags = {fullscreen=true, fullscreentype="desktop"}
   --love.window.setMode(screenW, screenH, modeFlags)
   -- Set up the room
+  glo.viewDistance = VIEW_DISTANCE
   local screenSz = { w = love.graphics.getWidth(),
                      h = love.graphics.getHeight() }
   glo.cellW = 50
@@ -24,10 +26,10 @@ function love.load()
   glo.rooms = load_map()
   local t, f = true, false
   glo.tiles = {
-    { name="wall",  pass=f, color={0xFF,0xFF,0xFF} },
-    { name="floor", pass=t, color={0x40,0x40,0x40} },
-    { name="grass", pass=t, color={0x20,0x80,0x20} },
-    { name="water", pass=f, color={0x20,0x20,0x80} },
+    { name="wall",  pass=f, vis=f, color={0xFF,0xFF,0xFF} },
+    { name="floor", pass=t, vis=t, color={0x40,0x40,0x40} },
+    { name="grass", pass=t, vis=t, color={0x20,0x80,0x20} },
+    { name="water", pass=f, vis=t, color={0x20,0x20,0x80} },
   }
   set_list_ids(glo.tiles)
   glo.visibleMarginCells = VISIBLE_MARGIN_CELLS
@@ -159,6 +161,8 @@ local arrow_keys = list_to_set({ "up", "down", "right", "left" })
 function love.keypressed(k)
   if k == "escape" or k == "q" then
     love.event.quit()
+  elseif k == "space" then
+    table.insert(glo.commands, { cmd="pass" })
   elseif arrow_keys[k] then
     dest = { r = glo.player.r, c = glo.player.c }
     if     k == "left"  then dest.c = dest.c - 1
@@ -252,7 +256,9 @@ function love.update()
       playerMadeMove = true
       glo.commandOutput = ""
     end
-    if cmd.cmd == "move" then
+    if cmd.cmd == "pass" then
+      glo.commandText = "CMD: Pass"
+    elseif cmd.cmd == "move" then
       local destChar = get_char(cmd.dest)
       if destChar then
         -- attack destChar
@@ -395,20 +401,115 @@ function love.draw()
 
   -- TODO: VISIBILITY
 
+  -- Used for status display / legend.
+  local charsVisible = {}
+  -- Allocate matrix to show which cells are visible.
+  local cellVisibilityMatrix = {}
+  for i = 1, 2 * glo.viewDistance + 1 do
+    local row = {}
+    for j = 1, 2 * glo.viewDistance + 1 do
+      table.insert(row, false)
+    end
+    table.insert(cellVisibilityMatrix, row)
+  end
+  -- Mark the spot where the player is standing as visible.
+  local center = glo.viewDistance + 1
+  cellVisibilityMatrix[center][center] = true
+
+  local cellVisibilityMatrixOffset = { r = glo.player.x - glo.viewDistance,
+                                       c = glo.player.y - glo.viewDistance }
+
+  function set_cell_visible(matrixCoords, depMatrixCoords)
+    for i,d in ipars(depMatrixCoords) do
+      if not cellVisibilityMatrix[d.r][d.c] then
+        return
+      end
+    end
+    local cellR = cellVisibilityMatrixOffset.r + matrixCoords.r
+    local cellC = cellVisibilityMatrixOffset.c + matrixCoords.c
+    local c = glo.rooms[cellR][cellC]
+    if c.vis then
+      cellVisibilityMatrix[matrixCoords.r][matrixCoords.c] = true
+    end
+  end
+
+  function cell_visible(cellRC)
+    local matrixCoordR = cellVisibilityMatrixOffset.r + cellRC.r
+    local matrixCoordC = cellVisibilityMatrixOffset.c + cellRC.c
+    return cellVisibilityMatrix[matrixCoordR][matrixCoordC]
+  end
+
+  for distance = 1, glo.viewDistance do
+    -- -- Handle the cardinal directions first.
+    -- if cellVisibilityMatrix[center - prevDist][center] then
+    --   cellVisibilityMatrix[center - distance][center] = true
+    -- end
+    -- if cellVisibilityMatrix[center][center + prevDist] then
+    --   cellVisibilityMatrix[center][center + distance] = true
+    -- end
+    -- if cellVisibilityMatrix[center + prevDist][center] then
+    --   cellVisibilityMatrix[center + distance][center] = true
+    -- end
+    -- if cellVisibilityMatrix[center][center - prevDist] then
+    --   cellVisibilityMatrix[center][center - distance] = true
+    -- end
+    -- Deal with everything except the corners first.
+    for step = center - distance + 1, center + distance - 1 do
+      if cellVisibilityMatrix[step][center + distance - 1] then
+        cellVisibilityMatrix[step][center + distance] = true
+      end
+      if cellVisibilityMatrix[step][center - distance + 1] then
+        cellVisibilityMatrix[step][center - distance] = true
+      end
+      if cellVisibilityMatrix[center + distance - 1][step] then
+        cellVisibilityMatrix[center + distance][step] = true
+      end
+      if cellVisibilityMatrix[center - distance + 1][step] then
+        cellVisibilityMatrix[center - distance][step] = true
+      end
+    end
+    -- Now the corners.
+    if ( cellVisibilityMatrix[center - distance + 1][center - distance]
+         and cellVisibilityMatrix[center - distance][center - distance + 1] )
+    then
+      cellVisibilityMatrix[center - distance][center - distance] = true
+    end
+    if ( cellVisibilityMatrix[center - distance + 1][center + distance]
+         and cellVisibilityMatrix[center - distance][center + distance - 1] )
+    then
+      cellVisibilityMatrix[center - distance][center + distance] = true
+    end
+    if ( cellVisibilityMatrix[center + distance - 1][center + distance]
+         and cellVisibilityMatrix[center + distance][center + distance - 1] )
+    then
+      cellVisibilityMatrix[center + distance][center + distance] = true
+    end
+    if ( cellVisibilityMatrix[center + distance - 1][center - distance]
+         and cellVisibilityMatrix[center + distance][center - distance + 1] )
+    then
+      cellVisibilityMatrix[center + distance][center - distance] = true
+    end
+  end
+
   -- Draw the map
+  local charsVisible = {}  -- Used for status display / legend.
   for ri, rv in ipairs(glo.rooms) do
     local y = ri * glo.cellH
     for ci, cv in ipairs(rv) do
       local x = ci * glo.cellW
+      local effectiveX, effectiveY = x - glo.view.x, y - glo.view.y
       tile = glo.tiles[cv]
       love.graphics.setColor(tile.color)
-      local effectiveX, effectiveY = x - glo.view.x, y - glo.view.y
-      love.graphics.rectangle("fill",
-        effectiveX, effectiveY,
-        glo.cellW, glo.cellH)
-      local charHere = get_char({r=ri,c=ci})
-      if charHere then
-        draw_char(effectiveX, effectiveY, charHere)
+      if cellVisibilityMatrix[ glo.player.x - glo.viewDistance +  ]
+      then
+        love.graphics.rectangle("fill",
+          effectiveX, effectiveY,
+          glo.cellW, glo.cellH)
+        local charHere = get_char({r=ri,c=ci})
+        if charHere then
+          draw_char(effectiveX, effectiveY, charHere)
+          table.insert(charsVisible, charHere)
+        end
       end
     end
   end
