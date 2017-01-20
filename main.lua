@@ -8,7 +8,7 @@ function love.load()
   local FONT_SIZE = 24
   local INFO_PANE_H = 200
   local VISIBLE_MARGIN_CELLS = 3
-  local VIEW_DISTANCE = 20
+  local VIEW_DISTANCE = 5
   math.randomseed(1)
   -- Init global state
   glo.quitting = 0
@@ -171,6 +171,8 @@ function love.keypressed(k)
     elseif k == "down"  then dest.r = dest.r + 1
     end
     table.insert(glo.commands, { cmd="move", dest=dest })
+  elseif k == "d" then
+    glo.dumpedVisMtx = false -- dump debug info again
   end
 end
 
@@ -416,18 +418,43 @@ function love.draw()
   local center = glo.viewDistance + 1
   cellVisibilityMatrix[center][center] = 2
 
-  local cellVisibilityMatrixOffset = { glo.player.r - glo.viewDistance,
-                                       glo.player.c - glo.viewDistance }
+  local cellVisibilityMatrixOffset = { glo.player.r - center,
+                                       glo.player.c - center }
 
-  function set_cell_visible(matrixCoords, depMatrixCoords)
-    local visible = false
-    for _,d in ipairs(depMatrixCoords) do
-      if cellVisibilityMatrix[d[1]][d[2]] == 2 then
-        visible = true
-        break
+  if not glo.dumpedVisMtx then print(string.format("CENTER: %d,%d", center, center)) end
+  local colCount = 0
+  function set_cell_visible(matrixCoords)
+    local vec = { center - matrixCoords[1], center - matrixCoords[2] }
+    local blockingCell = nil
+    local dominates = ''
+    if math.abs(vec[1]) > math.abs(vec[2]) then
+      -- row dominates
+      blockingCell = { matrixCoords[1] + sign(vec[1]),
+                       matrixCoords[2] }
+      dominates = 'R'
+    elseif math.abs(vec[1]) < math.abs(vec[2]) then
+      -- col dominates
+      blockingCell = { matrixCoords[1],
+                       matrixCoords[2] + sign(vec[2]) }
+      dominates = 'C'
+    else
+      -- perfect diagonal
+      blockingCell = { matrixCoords[1] + sign(vec[1]),
+                       matrixCoords[2] + sign(vec[2]) }
+      dominates = 'X'
+    end
+    if not glo.dumpedVisMtx then
+      io.write(string.format("(%02d,%02d;%02d,%02d|%s) ",
+        matrixCoords[1], matrixCoords[2], blockingCell[1], blockingCell[2], dominates))
+      colCount = colCount + 1
+      if colCount == 4 then
+        colCount = 0
+        print('')
       end
     end
-    if not visible then return end
+    if cellVisibilityMatrix[blockingCell[1]][blockingCell[2]] ~= 2 then
+      return
+    end
     local cellR = cellVisibilityMatrixOffset[1] + matrixCoords[1]
     local cellC = cellVisibilityMatrixOffset[2] + matrixCoords[2]
     local c = get_tile({r=cellR, c=cellC})
@@ -449,26 +476,17 @@ function love.draw()
   end
 
   for distance = 1, glo.viewDistance do
-    -- Deal with everything except the corners first.
-    for step = center - distance + 1, center + distance - 1 do
-      set_cell_visible({step, center + distance}, { {step, center + distance - 1} })
-      set_cell_visible({step, center - distance}, { {step, center - distance + 1} })
-      set_cell_visible({center + distance, step}, { {center + distance - 1, step} })
-      set_cell_visible({center - distance, step}, { {center - distance + 1, step} })
+    for step = 0, distance - 1 do
+      local stepCells = {
+        {center - distance, center - distance + step}, {center - distance, center + step},
+        {center - distance + step, center + distance}, {center + step, center + distance},
+        {center + distance, center + distance - step}, {center + distance, center - step},
+        {center + distance - step, center - distance}, {center - step, center - distance},
+      }
+      for _, c in ipairs(stepCells) do
+        set_cell_visible(c)
+      end
     end
-    -- Now the corners.
-    set_cell_visible({center - distance, center - distance}, { {center - distance + 1, center - distance},
-                                                               {center - distance + 1, center - distance + 1},
-                                                               {center - distance, center - distance + 1} })
-    set_cell_visible({center - distance, center + distance}, { {center - distance + 1, center + distance},
-                                                               {center - distance + 1, center + distance - 1},
-                                                               {center - distance, center + distance - 1} })
-    set_cell_visible({center + distance, center + distance}, { {center + distance - 1, center + distance},
-                                                               {center + distance - 1, center + distance - 1},
-                                                               {center + distance, center + distance - 1} })
-    set_cell_visible({center + distance, center - distance}, { {center + distance - 1, center - distance},
-                                                               {center + distance - 1, center - distance + 1},
-                                                               {center + distance, center - distance + 1} })
   end
 
   if not glo.dumpedVisMtx then -- DUMP ONCE
