@@ -414,6 +414,7 @@ function love.draw()
     end
     table.insert(cellVisibilityMatrix, row)
   end
+
   -- Mark the spot where the player is standing as visible.
   local center = glo.viewDistance + 1
   cellVisibilityMatrix[center][center] = 2
@@ -424,28 +425,15 @@ function love.draw()
   if not glo.dumpedVisMtx then print(string.format("CENTER: %d,%d", center, center)) end
   local colCount = 0
   function set_cell_visible(matrixCoords)
-    local vec = { center - matrixCoords[1], center - matrixCoords[2] }
-    local blockingCell = nil
-    local dominates = ''
-    if math.abs(vec[1]) > math.abs(vec[2]) then
-      -- row dominates
-      blockingCell = { matrixCoords[1] + sign(vec[1]),
-                       matrixCoords[2] }
-      dominates = 'R'
-    elseif math.abs(vec[1]) < math.abs(vec[2]) then
-      -- col dominates
-      blockingCell = { matrixCoords[1],
-                       matrixCoords[2] + sign(vec[2]) }
-      dominates = 'C'
-    else
-      -- perfect diagonal
-      blockingCell = { matrixCoords[1] + sign(vec[1]),
-                       matrixCoords[2] + sign(vec[2]) }
-      dominates = 'X'
+    local diffVec = { center - matrixCoords[1], center - matrixCoords[2] }
+    local unitVec = nil
+    if math.abs(vec[1]) > math.abs(vec[2]) then     unitVec = { sign(vec[1]), 0 }
+    elseif math.abs(vec[1]) < math.abs(vec[2]) then unitVec = { 0, sign(vec[2]) }
+    else                                            unitVec = { sign(vec[1]), sign(vec[2]) }
     end
     if not glo.dumpedVisMtx then
-      io.write(string.format("(%02d,%02d;%02d,%02d|%s) ",
-        matrixCoords[1], matrixCoords[2], blockingCell[1], blockingCell[2], dominates))
+      io.write(string.format("(%02d,%02d; %02d,%02d) ",
+        matrixCoords[1], matrixCoords[2], unitVec[1], unitVec[2]))
       colCount = colCount + 1
       if colCount == 4 then
         colCount = 0
@@ -476,12 +464,12 @@ function love.draw()
   end
 
   for distance = 1, glo.viewDistance do
-    for step = 0, distance - 1 do
+    for step = -distance, distance do
       local stepCells = {
-        {center - distance, center - distance + step}, {center - distance, center + step},
-        {center - distance + step, center + distance}, {center + step, center + distance},
-        {center + distance, center + distance - step}, {center + distance, center - step},
-        {center + distance - step, center - distance}, {center - step, center - distance},
+        {center - distance, center - distance + step},
+        {center - distance + step, center + distance},
+        {center + distance, center + distance - step},
+        {center + distance - step, center - distance},
       }
       for _, c in ipairs(stepCells) do
         set_cell_visible(c)
