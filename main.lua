@@ -62,7 +62,7 @@ function love.load()
                       tileFontSize, charLetterBoxW, charLetterBoxH))
   -- Set up chars.
   glo.chars = load_chars(gameData)
-  dump(glo.chars)
+  --dump(glo.chars)
   glo.player = glo.chars[1]
   -- Ensure that we don't start up with the view over in one corner.
   recenter_view()
@@ -227,11 +227,11 @@ function char_ai_move(char)
   end
   -- Make the first available move.
   if moves then
-    print(string.format("%s moves: (%d,%d) (%d,%d)",
-                        char.name, moves[1].r, moves[1].c, moves[2].r, moves[2].c))
+    --print(string.format("%s moves: (%d,%d) (%d,%d)",
+    --                    char.name, moves[1].r, moves[1].c, moves[2].r, moves[2].c))
     for _, m in ipairs(moves) do
-      print("Tile: "..get_tile(m).name)
-      print("Char: "..(get_char(m) and get_char(m).name or "none"))
+      --print("Tile: "..get_tile(m).name)
+      --print("Char: "..(get_char(m) and get_char(m).name or "none"))
       if get_tile(m).pass and not get_char(m) then
         table.insert(glo.events, new_event("Move", { actor = char, dest = m }))
         break
