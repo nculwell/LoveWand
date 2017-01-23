@@ -5,9 +5,10 @@ local glo = {}
 local CHAR_SIZE = 0.8
 
 function love.load()
+  local gameData = load_game_data()
   local FONT_SIZE = 24
   local INFO_PANE_H = 200
-  local VISIBLE_MARGIN_CELLS = 3
+  local VISIBLE_MARGIN_CELLS = 5
   local VIEW_DISTANCE = 5
   math.randomseed(1)
   -- Init global state
@@ -23,7 +24,7 @@ function love.load()
                      h = love.graphics.getHeight() }
   glo.cellW = 50
   glo.cellH = 50
-  glo.rooms = load_map()
+  glo.rooms = gameData.map
   local t, f = true, false
   glo.tiles = {
     { name="wall",  pass=f, vis=f, color={0xFF,0xFF,0xFF} },
@@ -60,105 +61,36 @@ function love.load()
   print(string.format("Tile font size: %q. Letter box: %dx%d",
                       tileFontSize, charLetterBoxW, charLetterBoxH))
   -- Set up chars.
-  glo.chars = {
-    new_char(2, 2, "Player"),
-    new_char(4, 4, "Goblin"),
-    new_char(8, 8, "Smurf"),
-  }
-  glo.char_pos = {}
-  for i, c in ipairs(glo.chars) do
-    local key = string.format("%d,%d", c.r, c.c)
-    glo.char_pos[key] = c
-  end
+  glo.chars = load_chars(gameData)
   dump(glo.chars)
   glo.player = glo.chars[1]
   -- Ensure that we don't start up with the view over in one corner.
   recenter_view()
-  glo.commands = {}
+  glo.commands = {}  -- queue for commands issued by the user (i.e. input)
+  glo.events = {}    -- queue for events to display to user
 end
 
-local NextCharID = 1
+------------------------------------------------------------
+-- INPUT EVENTS
 
-function new_char(r, c, name)
-  local char = { id = NextCharID, r = r, c = c, name = name, alive = true }
-  NextCharID = NextCharID + 1
-  if name == "Player" then
-    char.color = {0xFF,0x00,0x00}
-    char.letter = "@"
-    char.base = {
-      hp = 100,
-      speed = 50,
-      attack = 50,
-    }
-  elseif name == "Goblin" then
-    char.color = {0x00,0xFF,0x00}
-    char.letter = "G"
-    char.base = {
-      hp = 60,
-      speed = 50,
-      attack = 40,
-      aggression = 70,
-    }
-  elseif name == "Smurf" then
-    char.color = {0x00,0x00,0xFF}
-    char.letter = "S"
-    char.base = {
-      hp = 40,
-      speed = 50,
-      attack = 30,
-      aggression = 30,
-    }
-  end
-  -- Copy base stats to current stats.
-  char.cur = {}
-  for stat, statValue in pairs(char.base) do
-    char.cur[stat] = statValue
-  end
-  return char
-end
-
-function set_list_ids(list)
-  for id, item in ipairs(list) do
-    item.id = id
+function love.mousepressed(x, y, button, istouch)
+  if button == 1 then
+  elseif button == 2 then
+    -- Center at mouse click
+    local screenW = love.graphics.getWidth()
+    local screenH = love.graphics.getHeight()
+    glo.view.x = glo.view.x + (x - math.floor(screenW / 2))
+    glo.view.y = glo.view.y + (y - math.floor(screenH / 2))
   end
 end
 
-function get_tile(cellRC)
-  local col = glo.rooms[cellRC.r]
-  if col == nil then return nil end
-  local tileID = col[cellRC.c]
-  if tileID == nil then return nil end
-  local tile = glo.tiles[tileID]
-  return tile
+function love.quit()
+  -- Return true here to abort quit.
+  return false
 end
-
-function get_char(cellRC)
-  local key = string.format("%d,%d", cellRC.r, cellRC.c)
-  return glo.char_pos[key]
-end
-
-function move_char(char, toCellRC)
-  local oldKey = string.format("%d,%d", char.r, char.c)
-  glo.char_pos[oldKey] = nil
-  if toCellRC ~= nil then
-    local newKey = string.format("%d,%d", toCellRC.r, toCellRC.c)
-    glo.char_pos[newKey] = char
-    char.r = toCellRC.r
-    char.c = toCellRC.c
-  end
-end
-
-function list_to_set(x)
-  local s = {}
-  for i,v in ipairs(x) do
-    s[v] = true
-  end
-  return s
-end
-
-local arrow_keys = list_to_set({ "up", "down", "right", "left" })
 
 function love.keypressed(k)
+  local arrow_keys = list_to_set({ "up", "down", "right", "left" })
   if k == "escape" or k == "q" then
     love.event.quit()
   elseif k == "space" then
@@ -176,75 +108,8 @@ function love.keypressed(k)
   end
 end
 
-function kill_char(char)
-  -- TODO: drop loot
-  move_char(char, nil) -- Remove char from the map.
-  char.alive = false
-end
-
-function attack(attackChar, targetChar)
-  local damage = 0
-  if type(attackChar.cur.attack) == "table" then
-    for i = 1, attackChar.cur.attack[1] do
-      damage = damage + math.random(attackChar.cur.attack[2])
-    end
-  else
-    damage = math.random(attackChar.cur.attack)
-  end
-  glo.commandOutput = glo.commandOutput .. string.format("[%s->%s: %d] ", attackChar.name, targetChar.name, damage)
-  targetChar.cur.hp = targetChar.cur.hp - damage
-  if targetChar.cur.hp < 0 then
-    targetChar.cur.hp = 0
-  end
-  if targetChar.cur.hp == 0 then
-    glo.commandOutput = glo.commandOutput .. string.format("(%s dies!) ", targetChar.name)
-    kill_char(targetChar)
-  end
-  return damage
-end
-
-function recenter_view()
-  local screenW, screenH = love.graphics.getWidth(), love.graphics.getHeight()
-  -- Box around player that should remain visible. (View shifts to keep it in view.)
-  local playerVisibleBox = {
-    x = (glo.player.c - glo.visibleMarginCells) * glo.cellW,
-    y = (glo.player.r - glo.visibleMarginCells) * glo.cellH,
-    w = (1 + 2 * glo.visibleMarginCells) * glo.cellW,
-    h = (1 + 2 * glo.visibleMarginCells) * glo.cellH,
-  }
-  -- First check right and bottom edges.
-  -- (By putting these first, if the view box is larger than the screen
-  -- then we'll align to the left and top edges since they are done last.)
-  if box_right_x(playerVisibleBox) > box_right_x(glo.view) then
-    glo.view.x = box_right_x(playerVisibleBox) - glo.view.w
-  end
-  if box_bottom_y(playerVisibleBox) > box_bottom_y(glo.view) then
-    glo.view.y = box_bottom_y(playerVisibleBox) - glo.view.h
-  end
-  -- Then check left and top edges.
-  if playerVisibleBox.x < glo.view.x then
-    glo.view.x = playerVisibleBox.x
-  end
-  if playerVisibleBox.y < glo.view.y then
-    glo.view.y = playerVisibleBox.y
-  end
-end
-
-function love.mousepressed(x, y, button, istouch)
-  if button == 1 then
-  elseif button == 2 then
-    -- Center at mouse click
-    local screenW = love.graphics.getWidth()
-    local screenH = love.graphics.getHeight()
-    glo.view.x = glo.view.x + (x - math.floor(screenW / 2))
-    glo.view.y = glo.view.y + (y - math.floor(screenH / 2))
-  end
-end
-
-function love.quit()
-  -- Return true here to abort quit.
-  return false
-end
+------------------------------------------------------------
+-- UPDATE
 
 local displayText = {}
 
@@ -392,6 +257,9 @@ function love.update()
   displayText[4] = viewInfo
 end
 
+------------------------------------------------------------
+-- DISPLAY
+
 function love.draw()
   local glo = glo
   local screenW = love.graphics.getWidth()
@@ -401,7 +269,50 @@ function love.draw()
   love.graphics.setBlendMode("alpha")
   --love.graphics.setBlendMode("alpha", "premultiplied")
 
-  -- TODO: VISIBILITY
+  --local vis = compute_visibility()
+  function return_true(cellRC) return true end
+  local vis = {
+    is_cell_visible = return_true
+  }
+
+  -- Draw the map
+  local charsVisible = {}  -- Used for status display / legend.
+  for ri, rv in ipairs(glo.rooms) do
+    local y = ri * glo.cellH
+    for ci, cv in ipairs(rv) do
+      local x = ci * glo.cellW
+      local effectiveX, effectiveY = x - glo.view.x, y - glo.view.y
+      tile = glo.tiles[cv]
+      love.graphics.setColor(tile.color)
+      if vis:is_cell_visible({r=ri, c=ci}) then
+        love.graphics.rectangle("fill",
+          effectiveX, effectiveY,
+          glo.cellW, glo.cellH)
+        local charHere = get_char({r=ri,c=ci})
+        if charHere then
+          draw_char(effectiveX, effectiveY, charHere)
+          table.insert(charsVisible, charHere)
+        end
+      end
+    end
+  end
+
+  -- Display displayText
+  local infoPaneTop = screenH - 200
+  love.graphics.setFont(glo.infoFont)
+  love.graphics.setColor({ 0,0,0,0xFF })
+  love.graphics.rectangle("fill", 0, infoPaneTop, screenW, 200)
+  love.graphics.setColor({ 0xFF,0xFF,0xFF,0xFF })
+  local infoTextPadding = 10
+  local infoTextX, infoTextY = infoTextPadding, infoPaneTop + infoTextPadding
+  local lineSkip = 1.2 * glo.infoFont:getHeight()
+  for i, text in ipairs(displayText) do
+    love.graphics.print(text, infoTextX, infoTextY)
+    infoTextY = infoTextY + lineSkip
+  end
+end
+
+function compute_visibility()
 
   -- Used for status display / legend.
   local charsVisible = {}
@@ -427,9 +338,9 @@ function love.draw()
   function set_cell_visible(matrixCoords)
     local diffVec = { center - matrixCoords[1], center - matrixCoords[2] }
     local unitVec = nil
-    if math.abs(vec[1]) > math.abs(vec[2]) then     unitVec = { sign(vec[1]), 0 }
-    elseif math.abs(vec[1]) < math.abs(vec[2]) then unitVec = { 0, sign(vec[2]) }
-    else                                            unitVec = { sign(vec[1]), sign(vec[2]) }
+    if math.abs(diffVec[1]) > math.abs(diffVec[2]) then     unitVec = { sign(diffVec[1]), 0 }
+    elseif math.abs(diffVec[1]) < math.abs(diffVec[2]) then unitVec = { 0, sign(diffVec[2]) }
+    else                                            unitVec = { sign(diffVec[1]), sign(diffVec[2]) }
     end
     if not glo.dumpedVisMtx then
       io.write(string.format("(%02d,%02d; %02d,%02d) ",
@@ -487,41 +398,12 @@ function love.draw()
     end
   end
 
-  -- Draw the map
-  local charsVisible = {}  -- Used for status display / legend.
-  for ri, rv in ipairs(glo.rooms) do
-    local y = ri * glo.cellH
-    for ci, cv in ipairs(rv) do
-      local x = ci * glo.cellW
-      local effectiveX, effectiveY = x - glo.view.x, y - glo.view.y
-      tile = glo.tiles[cv]
-      love.graphics.setColor(tile.color)
-      if is_cell_visible({r=ri, c=ci}) then
-        love.graphics.rectangle("fill",
-          effectiveX, effectiveY,
-          glo.cellW, glo.cellH)
-        local charHere = get_char({r=ri,c=ci})
-        if charHere then
-          draw_char(effectiveX, effectiveY, charHere)
-          table.insert(charsVisible, charHere)
-        end
-      end
-    end
-  end
+  return {
+    matrix = cellVisibilityMatrix,
+    offset = cellVisibilityMatrixOffset,
+    is_cell_visible = is_cell_visible,
+  }
 
-  -- Display displayText
-  local infoPaneTop = screenH - 200
-  love.graphics.setFont(glo.infoFont)
-  love.graphics.setColor({ 0,0,0,0xFF })
-  love.graphics.rectangle("fill", 0, infoPaneTop, screenW, 200)
-  love.graphics.setColor({ 0xFF,0xFF,0xFF,0xFF })
-  local infoTextPadding = 10
-  local infoTextX, infoTextY = infoTextPadding, infoPaneTop + infoTextPadding
-  local lineSkip = 1.2 * glo.infoFont:getHeight()
-  for i, text in ipairs(displayText) do
-    love.graphics.print(text, infoTextX, infoTextY)
-    infoTextY = infoTextY + lineSkip
-  end
 end
 
 function draw_char(cellX, cellY, char)
@@ -542,7 +424,7 @@ function draw_char(cellX, cellY, char)
   love.graphics.print(char.letter, cellX + letterOffsetX, cellY + letterOffsetY)
 end
 
---------------------
+------------------------------------------------------------
 -- UTILITY FUNCTIONS
 
 function dump(x)
@@ -601,31 +483,220 @@ function sign(x)
   end
 end
 
-function load_map()
+function list_to_set(x)
+  local s = {}
+  for i,v in ipairs(x) do
+    s[v] = true
+  end
+  return s
+end
+
+------------------------------------------------------------
+-- GAME LOGIC
+
+local NextCharID = 1
+
+function load_chars(gameData)
+  function new_char(r, c, name)
+    -- Initialize char with supplied info.
+    local char = { id = NextCharID, r = r, c = c, name = name, alive = true }
+    -- Increment shared ID counter.
+    NextCharID = NextCharID + 1
+    -- Get char archetype details from game data and add them to char object.
+    local charArchetype =
+      assert(gameData.charArchetypes[name], "Character archetype undefined: "..name)
+    for k, v in pairs(charArchetype) do
+      char[k] = v
+    end
+    -- Copy base stats to current stats.
+    char.cur = {}
+    for stat, statValue in pairs(char.base) do
+      char.cur[stat] = statValue
+    end
+    return char
+  end
+  -- Load the chars specified by the game data.
+  local chars = {}
+  for i, c in ipairs(gameData.chars) do
+    chars[i] = new_char(c[1], c[2], c[3])
+  end
+  -- Build a table from map locations to chars.
+  chars.map = build_char_location_map(chars)
+  return chars
+end
+
+function build_char_location_map(chars)
+  local charLocationMap = {}
+  for _, c in ipairs(chars) do
+    local key = string.format("%d,%d", c.r, c.c)
+    charLocationMap[key] = c
+  end
+  return charLocationMap
+end
+
+function set_list_ids(list)
+  for id, item in ipairs(list) do
+    item.id = id
+  end
+end
+
+function get_tile(cellRC)
+  local col = glo.rooms[cellRC.r]
+  if col == nil then return nil end
+  local tileID = col[cellRC.c]
+  if tileID == nil then return nil end
+  local tile = glo.tiles[tileID]
+  return tile
+end
+
+function get_char(cellRC)
+  local key = string.format("%d,%d", cellRC.r, cellRC.c)
+  return glo.chars.map[key]
+end
+
+function move_char(char, toCellRC)
+  local oldKey = string.format("%d,%d", char.r, char.c)
+  glo.chars.map[oldKey] = nil
+  if toCellRC ~= nil then
+    local newKey = string.format("%d,%d", toCellRC.r, toCellRC.c)
+    glo.chars.map[newKey] = char
+    char.r = toCellRC.r
+    char.c = toCellRC.c
+  end
+end
+
+function kill_char(char)
+  -- TODO: drop loot
+  move_char(char, nil) -- Remove char from the map.
+  char.alive = false
+end
+
+function die(nTimes, nSides)
+  local newDie = { times = nTimes, sides = nSides }
+  function newDie.roll(self)
+    local x = 0
+    for i = 1, self.nTimes do
+      x = x + math.random(self.nSides)
+    end
+    return x
+  end
+  return newDie
+end
+
+function attack(attackChar, targetChar)
+  local damage = 0
+  if type(attackChar.cur.attack) == "table" then
+    for i = 1, attackChar.cur.attack[1] do
+      damage = damage + math.random(attackChar.cur.attack[2])
+    end
+  else
+    damage = math.random(attackChar.cur.attack)
+  end
+  glo.commandOutput = glo.commandOutput .. string.format("[%s->%s: %d] ", attackChar.name, targetChar.name, damage)
+  targetChar.cur.hp = targetChar.cur.hp - damage
+  if targetChar.cur.hp < 0 then
+    targetChar.cur.hp = 0
+  end
+  if targetChar.cur.hp == 0 then
+    glo.commandOutput = glo.commandOutput .. string.format("(%s dies!) ", targetChar.name)
+    kill_char(targetChar)
+  end
+  return damage
+end
+
+function recenter_view()
+  local screenW, screenH = love.graphics.getWidth(), love.graphics.getHeight()
+  -- Box around player that should remain visible. (View shifts to keep it in view.)
+  local playerVisibleBox = {
+    x = (glo.player.c - glo.visibleMarginCells) * glo.cellW,
+    y = (glo.player.r - glo.visibleMarginCells) * glo.cellH,
+    w = (1 + 2 * glo.visibleMarginCells) * glo.cellW,
+    h = (1 + 2 * glo.visibleMarginCells) * glo.cellH,
+  }
+  -- First check right and bottom edges.
+  -- (By putting these first, if the view box is larger than the screen
+  -- then we'll align to the left and top edges since they are done last.)
+  if box_right_x(playerVisibleBox) > box_right_x(glo.view) then
+    glo.view.x = box_right_x(playerVisibleBox) - glo.view.w
+  end
+  if box_bottom_y(playerVisibleBox) > box_bottom_y(glo.view) then
+    glo.view.y = box_bottom_y(playerVisibleBox) - glo.view.h
+  end
+  -- Then check left and top edges.
+  if playerVisibleBox.x < glo.view.x then
+    glo.view.x = playerVisibleBox.x
+  end
+  if playerVisibleBox.y < glo.view.y then
+    glo.view.y = playerVisibleBox.y
+  end
+end
+
+------------------------------------------------------------
+-- GAME DATA
+
+function load_game_data()
   return {
-    { 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,2,4,4,4,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,2,4,4,4,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,2,2,4,4,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,2,2,2,4,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,2,3,3,3,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,3,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,2,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,2,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,2,1 },
-    { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,2,1 },
-    { 1,1,1,1,1,1,1,2,1,1,1,1,1,1,1,1 },
-    { 1,1,1,1,1,1,1,2,1,1,1,1,1,1,1,1 },
-    { 1,1,1,1,1,1,1,3,1,1,1,1,1,1,1,1 },
-    { 1,1,1,1,1,1,1,3,1,1,1,1,1,1,1,1 },
-    { 1,1,1,1,1,1,1,3,1,1,1,1,1,1,1,1 },
-    { 1,1,1,1,1,1,1,3,1,1,1,1,1,1,1,1 },
-    { 1,1,1,1,1,1,1,2,1,1,1,1,1,1,1,1 },
-    { 1,1,1,1,1,1,2,2,2,2,2,2,1,1,1,1 },
-    { 1,1,1,1,1,2,2,2,2,2,2,2,1,1,1,1 },
-    { 1,1,1,1,1,2,2,2,2,2,2,2,1,1,1,1 },
-    { 1,1,1,1,1,1,2,2,2,2,2,1,1,1,1,1 },
-    { 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 },
+    map = {
+      { 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 },
+      { 1,2,2,2,2,2,2,2,2,2,2,2,4,4,4,1 },
+      { 1,2,2,2,2,2,2,2,2,2,2,2,4,4,4,1 },
+      { 1,2,2,2,2,2,2,2,2,2,2,2,2,4,4,1 },
+      { 1,2,2,2,2,2,2,2,2,2,2,2,2,2,4,1 },
+      { 1,2,2,2,2,2,2,2,2,2,2,2,3,3,3,1 },
+      { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,3,1 },
+      { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,2,1 },
+      { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,2,1 },
+      { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,2,1 },
+      { 1,2,2,2,2,2,2,2,2,2,2,3,3,3,2,1 },
+      { 1,1,1,1,1,1,1,2,1,1,1,1,1,1,1,1 },
+      { 1,1,1,1,1,1,1,2,1,1,1,1,1,1,1,1 },
+      { 1,1,1,1,1,1,1,3,1,1,1,1,1,1,1,1 },
+      { 1,1,1,1,1,1,1,3,1,1,1,1,1,1,1,1 },
+      { 1,1,1,1,1,1,1,3,1,1,1,1,1,1,1,1 },
+      { 1,1,1,1,1,1,1,3,1,1,1,1,1,1,1,1 },
+      { 1,1,1,1,1,1,1,2,1,1,1,1,1,1,1,1 },
+      { 1,1,1,1,1,1,2,2,2,2,2,2,1,1,1,1 },
+      { 1,1,1,1,1,2,2,2,2,2,2,2,1,1,1,1 },
+      { 1,1,1,1,1,2,2,2,2,2,2,2,1,1,1,1 },
+      { 1,1,1,1,1,1,2,2,2,2,2,1,1,1,1,1 },
+      { 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 },
+    },
+    chars = {
+      { 2, 2, "Player" },
+      { 4, 4, "Goblin" },
+      { 8, 8, "Smurf" },
+    },
+    charArchetypes = {
+      Player = {
+        color = {0xFF,0x00,0x00},
+        letter = "@",
+        base = {
+          hp = 100,
+          speed = 50,
+          attack = 50,
+        },
+      },
+      Goblin = {
+        color = {0x00,0xFF,0x00},
+        letter = "G",
+        base = {
+          hp = 60,
+          speed = 50,
+          attack = 40,
+          aggression = 70,
+        },
+      },
+      Smurf = {
+        color = {0x00,0x00,0xFF},
+        letter = "S",
+        base = {
+          hp = 40,
+          speed = 50,
+          attack = 30,
+          aggression = 30,
+        },
+      },
+    },
   }
 end
 
