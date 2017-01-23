@@ -1,5 +1,5 @@
 
-local inspect = require('inspect')
+local inspect = require("inspect")
 local glo = {}
 
 local CHAR_SIZE = 0.8
@@ -108,17 +108,13 @@ function love.keypressed(k)
   end
 end
 
-------------------------------------------------------------
--- UPDATE
-
-local displayText = {}
-
-function love.update()
-
-  local playerMadeMove = false
-
+-- Translate commands into game events.
+function generate_input_events()
   -- Process pending commands.
-  for i, cmd in ipairs(glo.commands) do
+  local commands = glo.commands
+  glo.commands = {}
+  for i, cmd in ipairs(commands) do
+    local event = nil
     if not playerMadeMove then
       playerMadeMove = true
       glo.commandOutput = ""
@@ -128,20 +124,29 @@ function love.update()
     elseif cmd.cmd == "move" then
       local destChar = get_char(cmd.dest)
       if destChar then
-        -- attack destChar
-        glo.commandText = string.format("CMD: Attack char %s", destChar.name)
-        attack(glo.player, destChar)
+        event = new_event("Attack", { actor = glo.player, target = destChar})
       elseif get_tile(cmd.dest).pass then
-        -- move to dest
-        move_char(glo.player, cmd.dest)
-        recenter_view()
-        glo.commandText = string.format("CMD: Move to r%d c%d", cmd.dest.r, cmd.dest.c)
+        event = new_event("Move", { actor = glo.player, dest = cmd.dest })
       end
     end
+    if event then
+      local outcome = event:execute()
+      glo.commandText = outcome.output
+    end
   end
+end
 
-  -- Clear commands queue.
-  glo.commands = {}
+------------------------------------------------------------
+-- UPDATE
+
+local displayText = {}
+
+function love.update()
+
+  generate_input_events()
+
+  local playerMadeMove = false
+  --process_events()
 
   -- Process NPC commands.
   if playerMadeMove then
@@ -491,16 +496,74 @@ function list_to_set(x)
   return s
 end
 
-------------------------------------------------------------
--- GAME LOGIC
+function copy_table(t)
+  local u = {}
+  for k, v in pairs(t) do
+    u[k] = v
+  end
+  return u
+end
 
-local NextCharID = 1
+------------------------------------------------------------
+-- GAME LOGIC: GAME EVENTS
+
+local eventFactories = {}
+
+eventFactories.Attack = {}
+eventFactories.Move = {}
+
+function eventFactories.Attack.create(params)
+  local event = { actor = params.actor, target = params.target }
+  function event.execute()
+    local att, tgt = event.actor, event.target
+    local damage = math.random(att.cur.attack)
+    tgt.cur.hp = tgt.cur.hp - damage
+    if tgt.cur.hp < 0 then
+      tgt.cur.hp = 0
+    end
+    local targetDied = (tgt.cur.hp == 0)
+    if targetDied then
+      kill_char(tgt)
+    end
+    return {
+      output = string.format("%s attacks %s for %d points of damage.",
+                             att.name, tgt.name, damage)
+               .. (targetDied and string.format(" %s dies!", tgt.name) or "")
+    , shorthand = string.format("A:%s,%s;%d", att.name, tgt.name, damage)
+    }
+  end
+  return event
+end
+
+function eventFactories.Move.create(params)
+  local event = { actor = params.actor, dest = params.dest }
+  function event.execute()
+    local act, dst = params.actor, params.dest
+    move_char(act, dst)
+    recenter_view()
+    return {
+      output = string.format("%s moves to (%d,%d).", act.name, dst.r, dst.c)
+    , shorthand = string.format("M:%s;%d,%d", act.name, dst.r, dst.c)
+    }
+  end
+  return event
+end
+
+function new_event(eventType, eventParams)
+  local eventFactory =
+    assert(eventFactories[eventType], "Invalid event type: "..eventType)
+  local event = assert(eventFactory.create(eventParams))
+  return event
+end
+
+------------------------------------------------------------
+-- GAME LOGIC: INIT
 
 function load_chars(gameData)
+  local NextCharID = 1
   function new_char(r, c, name)
     -- Initialize char with supplied info.
     local char = { id = NextCharID, r = r, c = c, name = name, alive = true }
-    -- Increment shared ID counter.
     NextCharID = NextCharID + 1
     -- Get char archetype details from game data and add them to char object.
     local charArchetype =
@@ -636,6 +699,7 @@ end
 
 function load_game_data()
   return {
+
     map = {
       { 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 },
       { 1,2,2,2,2,2,2,2,2,2,2,2,4,4,4,1 },
@@ -661,11 +725,13 @@ function load_game_data()
       { 1,1,1,1,1,1,2,2,2,2,2,1,1,1,1,1 },
       { 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 },
     },
+
     chars = {
       { 2, 2, "Player" },
       { 4, 4, "Goblin" },
       { 8, 8, "Smurf" },
     },
+
     charArchetypes = {
       Player = {
         color = {0xFF,0x00,0x00},
@@ -697,6 +763,7 @@ function load_game_data()
         },
       },
     },
+
   }
 end
 
