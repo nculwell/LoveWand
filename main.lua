@@ -167,77 +167,8 @@ function love.update()
     repeat
       for i = 2, table.getn(glo.chars) do
         local char = glo.chars[i]
-        if char.alive then
-          if check_stat(char.cur.speed) then
-            glo.commandText = (glo.commandText or '(X)') .. string.format(" [%s]", char.name)
-            local moves = nil
-            if check_stat(char.cur.aggression) then
-              -- Make an aggressive move.
-              glo.commandText = glo.commandText .. "A:"
-              local madeAttack = false
-              for _, cellRC in ipairs(adjacent_cells(char)) do
-                local cellChar = get_char(cellRC)
-                if cellChar and cellChar.id == 1 then
-                  -- NPC attacks player
-                  glo.commandText = glo.commandText .. "attack"
-                  local dam = attack(char, glo.player)
-                  glo.commandText = glo.commandText .. dam .. "hp"
-                  break
-                end
-              end
-              if not madeAttack then
-                -- NPC moves toward player.
-                -- Generate list of moves that go toward the player.
-                local diff = cell_diff(char, glo.player)
-                moves = {
-                  { r = char.r, c = char.c + sign(diff.c) },
-                  { r = char.r + sign(diff.r), c = char.c },
-                }
-                function swap() moves = { moves[2], moves[1] } end
-                if math.abs(diff.c) > math.abs(diff.r) then
-                  -- keep default priority
-                elseif math.abs(diff.c) < math.abs(diff.r) then
-                  -- swap priority
-                  swap()
-                else
-                  -- randomly swap priority
-                  if chance(1, 2) then
-                    swap()
-                  end
-                end
-              end
-            else
-              -- Make a cowardly move. NPC moves away from player.
-              glo.commandText = glo.commandText .. "C:"
-              -- Generate list of moves that go away from the player.
-              local diff = cell_diff(glo.player, char)
-              moves = {
-                { r = char.r, c = char.c + sign(diff.c) },
-                { r = char.r + sign(diff.r), c = char.c },
-              }
-              function swap() moves = { moves[2], moves[1] } end
-              if math.abs(diff.c) > math.abs(diff.r) then
-                -- keep default priority
-              elseif math.abs(diff.c) < math.abs(diff.r) then
-                -- swap priority
-                swap()
-              else
-                -- randomly swap priority
-                if math.random(2) <= 1 then
-                  swap()
-                end
-              end
-            end
-            -- Make the first available move.
-            if moves then
-              for _, m in ipairs(moves) do
-                if get_tile(m).pass and not get_char(m) then
-                  move_char(char, m)
-                  break
-                end
-              end
-            end
-          end
+        if char.alive and check_stat(char.cur.speed) then
+          char_ai_move(char)
         end
       end
     until check_stat(glo.player.cur.speed)
@@ -274,6 +205,39 @@ function love.update()
   displayText[2] = glo.commandText or ''
   displayText[3] = glo.commandOutput or ''
   displayText[4] = viewInfo
+end
+
+function char_ai_move(char)
+  glo.commandText = (glo.commandText or '(X)') .. string.format(" [%s]", char.name)
+  local moves = nil
+  if check_stat(char.cur.aggression) then
+    -- Make an aggressive move.
+    glo.commandText = glo.commandText .. "A:"
+    if is_char_adjacent(char, glo.player) then
+      -- NPC attacks player
+      table.insert(glo.events, new_event("Attack", { actor = char, target = glo.player }))
+    else
+      -- NPC moves toward player.
+      moves = choose_cell_in_direction(char, glo.player, true)
+    end
+  else
+    -- Make a cowardly move. NPC moves away from player.
+    glo.commandText = glo.commandText .. "C:"
+    moves = choose_cell_in_direction(char, glo.player, false)
+  end
+  -- Make the first available move.
+  if moves then
+    print(string.format("%s moves: (%d,%d) (%d,%d)",
+                        char.name, moves[1].r, moves[1].c, moves[2].r, moves[2].c))
+    for _, m in ipairs(moves) do
+      print("Tile: "..get_tile(m).name)
+      print("Char: "..(get_char(m) and get_char(m).name or "none"))
+      if get_tile(m).pass and not get_char(m) then
+        table.insert(glo.events, new_event("Move", { actor = char, dest = m }))
+        break
+      end
+    end
+  end
 end
 
 ------------------------------------------------------------
@@ -493,6 +457,44 @@ end
 function adjacent_cells(cellRC)
   return { { r = cellRC.r-1, c = cellRC.c },   { r = cellRC.r+1, c = cellRC.c },
            { r = cellRC.r,   c = cellRC.c-1 }, { r = cellRC.r,   c = cellRC.c+1 } }
+end
+
+function is_char_adjacent(referenceChar, adjacentChar)
+  if not adjacentChar.alive then return false end
+  for _, cellRC in ipairs(adjacent_cells(referenceChar)) do
+    local cellChar = get_char(cellRC)
+    if cellChar and adjacentChar.id == 1 then
+      return true
+    end
+  end
+  return false
+end
+
+function choose_cell_in_direction(fromCellRC, toCellRC, isDirectionToward)
+  -- Generate list of moves that go in the desired direction.
+  local diff = isDirectionToward
+    and cell_diff(fromCellRC, toCellRC)
+    or  cell_diff(toCellRC, fromCellRC)
+  moves = {
+    { r = fromCellRC.r, c = fromCellRC.c + sign(diff.c) },
+    { r = fromCellRC.r + sign(diff.r), c = fromCellRC.c },
+  }
+  function swap()
+    moves = { moves[2], moves[1] }
+  end
+  if math.abs(diff.c) > math.abs(diff.r) then
+    -- keep default priority
+  elseif math.abs(diff.c) < math.abs(diff.r) then
+    -- swap priority
+    swap()
+  else
+    -- randomly swap priority
+    if math.random(2) <= 1 then
+      swap()
+    end
+  end
+  -- Return the suggested moves.
+  return { moves[1], moves[2] }
 end
 
 function sign(x)
