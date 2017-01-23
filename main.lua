@@ -68,6 +68,7 @@ function love.load()
   recenter_view()
   glo.commands = {}  -- queue for commands issued by the user (i.e. input)
   glo.events = {}    -- queue for events to display to user
+  glo.endTurn = false
 end
 
 ------------------------------------------------------------
@@ -94,7 +95,7 @@ function love.keypressed(k)
   if k == "escape" or k == "q" then
     love.event.quit()
   elseif k == "space" then
-    table.insert(glo.commands, { cmd="pass" })
+    table.insert(glo.commands, { cmd="Pass" })
   elseif arrow_keys[k] then
     dest = { r = glo.player.r, c = glo.player.c }
     if     k == "left"  then dest.c = dest.c - 1
@@ -102,36 +103,40 @@ function love.keypressed(k)
     elseif k == "up"    then dest.r = dest.r - 1
     elseif k == "down"  then dest.r = dest.r + 1
     end
-    table.insert(glo.commands, { cmd="move", dest=dest })
+    table.insert(glo.commands, { cmd="Move", dest=dest })
   elseif k == "d" then
     glo.dumpedVisMtx = false -- dump debug info again
   end
 end
 
+local command_handlers = {
+  Pass = function (cmd) return { new_event("EndTurn") } end,
+  Move =
+    function (cmd)
+      local destChar = get_char(cmd.dest)
+      if destChar then
+        return { new_event("Attack", { actor = glo.player, target = destChar}),
+                 new_event("EndTurn") }
+      else
+        return { new_event("Move", { actor = glo.player, dest = cmd.dest }),
+                 new_event("EndTurn") }
+      end
+    end,
+}
+
 -- Translate commands into game events.
 function generate_input_events()
+  if table.getn(glo.commands) == 0 then return end
   -- Process pending commands.
   local commands = glo.commands
   glo.commands = {}
   for i, cmd in ipairs(commands) do
-    local event = nil
-    if not playerMadeMove then
-      playerMadeMove = true
-      glo.commandOutput = ""
-    end
-    if cmd.cmd == "pass" then
-      glo.commandText = "CMD: Pass"
-    elseif cmd.cmd == "move" then
-      local destChar = get_char(cmd.dest)
-      if destChar then
-        event = new_event("Attack", { actor = glo.player, target = destChar})
-      elseif get_tile(cmd.dest).pass then
-        event = new_event("Move", { actor = glo.player, dest = cmd.dest })
+    local handler = assert(command_handlers[cmd.cmd], "Invalid command: "..cmd.cmd)
+    local events = handler(cmd)
+    if events then
+      for _, e in ipairs(events) do
+        table.insert(glo.events, e)
       end
-    end
-    if event then
-      local outcome = event:execute()
-      glo.commandText = outcome.output
     end
   end
 end
@@ -145,11 +150,20 @@ function love.update()
 
   generate_input_events()
 
-  local playerMadeMove = false
-  --process_events()
+  if table.getn(glo.events) > 0 then
+    glo.commandText = ""
+    glo.commandOutput = ""
+    local events = glo.events
+    glo.events = {}
+    for _, e in ipairs(events) do
+      local outcome = e:execute()
+      glo.commandText = glo.commandText..outcome.output.." "
+    end
+  end
 
   -- Process NPC commands.
-  if playerMadeMove then
+  if glo.endTurn then
+    glo.endTurn = false
     repeat
       for i = 2, table.getn(glo.chars) do
         local char = glo.chars[i]
@@ -507,10 +521,32 @@ end
 ------------------------------------------------------------
 -- GAME LOGIC: GAME EVENTS
 
-local eventFactories = {}
+local eventFactories = { Attack = {}, Move = {}, Pass = {}, EndTurn = {} }
 
-eventFactories.Attack = {}
-eventFactories.Move = {}
+function new_event(eventType, eventParams)
+  local eventFactory =
+    assert(eventFactories[eventType], "Invalid event type: "..eventType)
+  local event = assert(eventFactory.create(eventParams))
+  return event
+end
+
+function eventFactories.EndTurn.create(params)
+  local event = {}
+  function event.execute()
+    -- TODO: Enqueue NPC turn event.
+    glo.endTurn = true
+    return { output = "<END OF TURN>" }
+  end
+  return event
+end
+
+function eventFactories.Pass.create(params)
+  local event = {}
+  function event.execute()
+    return { output = "<PASS>" }
+  end
+  return event
+end
 
 function eventFactories.Attack.create(params)
   local event = { actor = params.actor, target = params.target }
@@ -539,20 +575,19 @@ function eventFactories.Move.create(params)
   local event = { actor = params.actor, dest = params.dest }
   function event.execute()
     local act, dst = params.actor, params.dest
-    move_char(act, dst)
-    recenter_view()
-    return {
-      output = string.format("%s moves to (%d,%d).", act.name, dst.r, dst.c)
-    , shorthand = string.format("M:%s;%d,%d", act.name, dst.r, dst.c)
-    }
+    if get_tile(dst).pass then
+      move_char(act, dst)
+      recenter_view()
+      return {
+        output = string.format("%s moves to (%d,%d).", act.name, dst.r, dst.c)
+      , shorthand = string.format("M:%s;%d,%d", act.name, dst.r, dst.c)
+      }
+    else
+      return {
+        output = string.format("%s is unable to move to (%d,%d).", act.name, dst.r, dst.c)
+      }
+    end
   end
-  return event
-end
-
-function new_event(eventType, eventParams)
-  local eventFactory =
-    assert(eventFactories[eventType], "Invalid event type: "..eventType)
-  local event = assert(eventFactory.create(eventParams))
   return event
 end
 
