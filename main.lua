@@ -1,3 +1,4 @@
+-- vim: ts=2 sts=2 sw=2 et smarttab
 
 local inspect = require("inspect")
 local glo = {}
@@ -327,7 +328,7 @@ function compute_visibility()
     end
     if not glo.dumpedVisMtx then
       io.write(string.format("(%02d,%02d; %02d,%02d) ",
-        matrixCoords[1], matrixCoords[2], unitVec[1], unitVec[2]))
+        matrixCoords[1], matrixCoords[2], stepVec[1], stepVec[2]))
       colCount = colCount + 1
       if colCount == 4 then
         colCount = 0
@@ -358,7 +359,7 @@ function compute_visibility()
   end
 
   for distance = 1, glo.viewDistance do
-    for step = -distance, distance do
+    for step = 1 - distance, distance do
       local stepCells = {
         {center - distance, center - distance + step},
         {center - distance + step, center + distance},
